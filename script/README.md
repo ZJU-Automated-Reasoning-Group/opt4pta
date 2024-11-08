@@ -1,3 +1,5 @@
+## Usage
+
 1. 安装 screen、time 和 file
 2. 将 opt14.txt 和 wpa-pro.py 放到某个空目录下，比如叫 test
 3. 以 bash.bc 为例：使用 bc 文件不含扩展名的部分（bash）在 test 目录下创建一个目录 bash ，并将 bash.bc 放到 test/bash 目录中 
