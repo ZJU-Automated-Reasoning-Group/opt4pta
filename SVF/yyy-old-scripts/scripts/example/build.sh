@@ -1,0 +1,1 @@
+echo "build:"$PWD > build.output
