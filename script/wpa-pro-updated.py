@@ -55,7 +55,7 @@ sheet['F1'] = 'nander MSS(KB)'
 sheet['G1'] = 'fspta time(s)'
 sheet['H1'] = 'fspta mem(KB)'
 sheet['I1'] = 'pass args'
-
+workbook.save(xlsx_path)
 
 # pass
 options = []
@@ -146,7 +146,6 @@ def run(x, log_id = None):
 
     if ret_nander != 0 or ret_fspta != 0:
         colored_line('nander/fspta command: FAILED!', RED)
-        return        
 
     # Remove temp files
     os.system(rm_gcno)
@@ -190,6 +189,7 @@ def run(x, log_id = None):
 
     # Append result to sheet and save workbook
     sheet.append(list(result.values()))
+    print(result)
     workbook.save(xlsx_path)
     
     success_count += 1
@@ -208,7 +208,7 @@ if __name__ == '__main__':
     for i in tqdm(range(TOTAL_ITER)):
         
         colored_line('#' * 60)
-        colored_line(f'Iteration {i + 1}/{TOTAL_ITER} Success: {success_count}')
+        colored_line(f'Iteration {i + 1}/{TOTAL_ITER} Successed: {success_count}')
         colored_line('#' * 60)
         
         x = random.randint(0, 2 ** len(options))
