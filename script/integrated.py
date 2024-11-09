@@ -1,9 +1,13 @@
+# usage: python integrated.py --bc your_bitcode
 import os
 import re
 import time
 import random
 import openpyxl
 import argparse
+import resource
+import signal
+import subprocess
 
 from tqdm import tqdm
 
@@ -21,6 +25,10 @@ BITCODE_NAME = args.bc
 # Constants
 TOTAL_ITER = 100 # Total combinations of passes to run
 RANDOM_SEED = 15
+TIME_LIMIT = 900  # 15 min limit for a single test
+MEMORY_LIMIT = 1024 * 1024 * 1024 * 16  # 16 GB memory limit for a single test
+
+# Colors
 RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -35,6 +43,41 @@ success_count = 0
 
 # Init
 random.seed(RANDOM_SEED)
+
+def set_limits():
+    resource.setrlimit(resource.RLIMIT_CPU, (TIME_LIMIT, TIME_LIMIT))
+    resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
+
+def run_command(cmd, file_path):
+    try:
+        # Run the command with time and memory limits
+        begin_time = time.time()
+        result = subprocess.run(cmd, shell=True, preexec_fn=set_limits, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        end_time = time.time()
+
+        # Check if the command was killed by limits
+        if result.returncode == -signal.SIGKILL:
+            raise MemoryError("MLE")
+        elif result.returncode == -signal.SIGXCPU:
+            raise TimeoutError("TLE")
+        elif result.returncode != 0:
+            raise Exception
+
+        # Calculate time and extract memory usage
+        elapsed_time = end_time - begin_time
+        memory_usage = extract_max_resident_size(file_path)  # Adjust based on command output file
+        return result.returncode, elapsed_time, memory_usage
+
+    except MemoryError:
+        colored_line(f'{cmd}: Memory Limit Exceeded!', RED)
+        return result.returncode, 'MLE', 'MLE'
+    except TimeoutError:
+        colored_line(f'{cmd}: Time Limit Exceeded!', RED)
+        return result.returncode, 'TLE', 'TLE'
+    except Exception as e:
+        colored_line(f'{cmd}: FAILED due to error: {e}', RED)
+        return result.returncode, 'error', 'error'
+
 work_path = os.path.join(ROOT_PATH, BITCODE_NAME)
 output_path = os.path.join(work_path, "output")
 bc_path = os.path.join(work_path, f'{BITCODE_NAME}.bc')
@@ -130,39 +173,28 @@ def run(x, log_id = None):
     with open(os.path.join(opt_path, f'{str(log_id)}-args.txt'), 'w') as file:
         file.write(opt_cmd + '\n')
         file.flush()
-    begin_opt = time.time()
-    ret_opt = os.system(opt_cmd)
-    end_opt = time.time()
-    opt_time = end_opt - begin_opt
+    opt_cmd = f"/usr/bin/time -v opt {' '.join(conf)} {raw_part} > {os.path.join(opt_path, str(log_id))}.txt 2>&1"
+    colored_line(opt_cmd, YELLOW)
+    ret_opt, opt_time, opt_mem_usage = run_command(opt_cmd, os.path.join(opt_path, f"{log_id}.txt"))
 
     if ret_opt != 0:
         colored_line('opt command: FAILED!', RED)
         return
 
-    #! nander
-    nander_cmd = f"/usr/bin/time -v {nander_part} > {os.path.join(nander_path, str(log_id))}-stdout.txt " \
-                 f"2>{os.path.join(nander_path, str(log_id))}-stderr.txt"
-
+    # Run nander
+    nander_cmd = f"/usr/bin/time -v {nander_part} > {os.path.join(nander_path, str(log_id))}-stdout.txt 2>{os.path.join(nander_path, str(log_id))}-stderr.txt"
     colored_line(nander_cmd, YELLOW)
-    begin_nander = time.time()
-    ret_nander = os.system(nander_cmd)
-    end_nander = time.time()
+    ret_nander, nander_time, nander_mem_usage = run_command(nander_cmd, f"{os.path.join(nander_path, str(log_id))}-stderr.txt")
 
-    #! fspta
-    fspta_cmd = f"/usr/bin/time -v {fspta_part} > {os.path.join(fspta_path, str(log_id))}-stdout.txt " \
-                f"2>{os.path.join(fspta_path, str(log_id))}-stderr.txt"
+    # Run fspta
+    fspta_cmd = f"/usr/bin/time -v {fspta_part} > {os.path.join(fspta_path, str(log_id))}-stdout.txt 2>{os.path.join(fspta_path, str(log_id))}-stderr.txt"
     colored_line(fspta_cmd, BLUE)
-    begin_fspta = time.time()
-    ret_fspta = os.system(fspta_cmd)
-    end_fspta = time.time()
-    
-    #! sea-dsa
-    seadsa_cmd = f"/usr/bin/time -v {seadsa_part} > {os.path.join(seadsa_path, str(log_id))}-stdout.txt " \
-                f"2>{os.path.join(seadsa_path, str(log_id))}-stderr.txt"
+    ret_fspta, fspta_time, fspta_mem_usage = run_command(fspta_cmd, f"{os.path.join(fspta_path, str(log_id))}-stderr.txt")
+
+    # Run sea-dsa
+    seadsa_cmd = f"/usr/bin/time -v {seadsa_part} > {os.path.join(seadsa_path, str(log_id))}-stdout.txt 2>{os.path.join(seadsa_path, str(log_id))}-stderr.txt"
     colored_line(seadsa_cmd, CYAN)
-    begin_seadsa = time.time()
-    ret_seadsa = os.system(seadsa_cmd)
-    end_seadsa = time.time()
+    ret_seadsa, seadsa_time, seadsa_mem_usage = run_command(seadsa_cmd, f"{os.path.join(seadsa_path, str(log_id))}-stderr.txt")
 
     if ret_nander != 0:
         colored_line('nander command: FAILED!', RED)
@@ -177,46 +209,31 @@ def run(x, log_id = None):
     os.system('rm ' + temp_bc_path)
 
     result = {
-        'opt_success_count': success_count,
+        'id': log_id,
         'x': str(x),
         'opt_time': opt_time,
-        'opt_mem_usage': None,
-        'nander_time': None,
-        'nander_mem_usage': None,
-        'fspta_time': None,
-        'fspta_mem_usage': None,
+        'opt_mem_usage': opt_mem_usage,
+        'nander_time': nander_time,
+        'nander_mem_usage': nander_mem_usage,
+        'fspta_time': fspta_time,
+        'fspta_mem_usage': fspta_mem_usage,
+        'seadsa_time': seadsa_time,
+        'seadsa_mem_usage': seadsa_mem_usage,
         'passes': passes,
     }
 
-    # Extract memory usage for opt
-    opt_file_path = os.path.join(opt_path, f"{log_id}.txt")
-    result['opt_mem_usage'] = extract_max_resident_size(opt_file_path)
-    
-
     # Process nander result
-    if ret_nander > 0:
-        result['nander_time'] = 'error'
-        result['nander_mem_usage'] = 'error'
-    else:
-        nander_time = end_nander - begin_nander
+    if ret_nander == 0:
         nander_file_path = f"{os.path.join(nander_path, str(log_id))}-stderr.txt"
         process_result(result, nander_time, nander_file_path, 'nander_time', 'nander_mem_usage')
 
     # Process fspta result
-    if ret_fspta > 0:
-        result['fspta_time'] = 'error'
-        result['fspta_mem_usage'] = 'error'
-    else:
-        fspta_time = end_fspta - begin_fspta
+    if ret_fspta == 0:
         fspta_file_path = f"{os.path.join(fspta_path, str(log_id))}-stderr.txt"
         process_result(result, fspta_time, fspta_file_path, 'fspta_time', 'fspta_mem_usage')
     
     # Process sea-dsa result
-    if ret_seadsa > 0:
-        result['seadsa_time'] = 'error'
-        result['seadsa_mem_usage'] = 'error'
-    else:
-        seadsa_time = end_seadsa - begin_seadsa
+    if ret_seadsa == 0:
         seadsa_file_path = f"{os.path.join(seadsa_path, str(log_id))}-stderr.txt"
         process_result(result, seadsa_time, seadsa_file_path, 'seadsa_time', 'seadsa_mem_usage')
 
@@ -244,7 +261,6 @@ if __name__ == '__main__':
     training_indep = set()
     
     for i in tqdm(range(TOTAL_ITER)):
-        
         colored_line('#' * 60)
         colored_line(f'Iteration {i + 1}/{TOTAL_ITER}')
         colored_line('#' * 60)
@@ -253,4 +269,5 @@ if __name__ == '__main__':
         if x not in training_indep:
             training_indep.add(x)
             run(x, i)
+        colored_line(f"Successed: {success_count}/{i+1}")
     colored_line(f'Successed: {success_count}/{TOTAL_ITER}')
