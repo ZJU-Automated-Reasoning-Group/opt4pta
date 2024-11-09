@@ -58,7 +58,6 @@
 --loop-deletion
 --loop-distribute
 --loop-fusion
---loop-guard-widening
 --loop-idiom
 --loop-instsimplify
 --loop-interchange
